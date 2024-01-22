@@ -2,6 +2,7 @@ package mr
 
 import (
 	"fmt"
+	"os"
 	"sort"
 )
 import "log"
@@ -44,15 +45,18 @@ func Worker(mapf func(string, string) []KeyValue,
 	for mapReply.Index != -1 {
 		fmt.Printf("mapReply.Index: %d\n", mapReply.Index)
 		kva := mapf(mapReply.FileName, mapReply.Content)
-		//将map的结果放入intermediate中
-		intermediate = append(intermediate, kva...)
-		sort.Sort(ByKey(intermediate))
+		//定义reduce任务
 		reduceArgs := ReduceTask{}
 		reduceReply := ReduceReply{}
-		//将map的结果发送给coordinator
-		for i := 0; i < mapReply.NReduce; i++ {
-			reduceArgs.Index = i
-			reduceArgs.Intermediate = intermediate
+		//使用ihash函数对key进行hash，将相同的key放在一起
+		for _, kv := range kva {
+			intermediate = append(intermediate, kv)
+			sort.Sort(ByKey(intermediate))
+			reduceArgs.Index = ihash(kv.Key) % mapReply.NReduce
+			oname := fmt.Sprintf("mr-%d-%d", mapReply.Index, reduceArgs.Index)
+			ofile, _ := os.Create(oname)
+			fmt.Fprintf(ofile, "%v %v\n", kv.Key, kv.Value)
+			reduceArgs.IntermediateLocation = oname
 			call("Coordinator.PutIntermediate", &reduceArgs, &reduceReply)
 		}
 		//通知coordinator完成map任务
@@ -67,7 +71,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	for reduceReply.Index != -1 {
 		fmt.Printf("reduceReply.Index: %d\n", reduceReply.Index)
 		//获取reduce任务的结果
-		reduceArgs.Value = reducef(reduceArgs.Key, reduceArgs.Value)
+		output := getReduceValue()
 		//将reduce任务的结果发送给coordinator
 		call("Coordinator.PutResult", &reduceArgs, &reduceReply)
 		//通知coordinator完成reduce任务
