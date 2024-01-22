@@ -6,16 +6,20 @@ package main
 // go build -buildmode=plugin wc.go
 //
 
-import "6.5840/mr"
-import "unicode"
-import "strings"
-import "strconv"
+import (
+	"strconv"
+	"strings"
+	"unicode"
+
+	"6.5840/mr"
+)
 
 // The map function is called once for each file of input. The first
 // argument is the name of the input file, and the second is the
 // file's complete contents. You should ignore the input file name,
 // and look only at the contents argument. The return value is a slice
 // of key/value pairs.
+// 简言之，map函数的作用就是将输入的文件内容转换成key/value对，如hello world转换成(hello,1)(world,1)
 func Map(filename string, contents string) []mr.KeyValue {
 	// function to detect word separators.
 	ff := func(r rune) bool { return !unicode.IsLetter(r) }

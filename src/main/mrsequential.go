@@ -6,13 +6,16 @@ package main
 // go run mrsequential.go wc.so pg*.txt
 //
 
-import "fmt"
-import "6.5840/mr"
-import "plugin"
-import "os"
-import "log"
-import "io/ioutil"
-import "sort"
+import (
+	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
+	"plugin"
+	"sort"
+
+	"6.5840/mr"
+)
 
 // for sorting by key.
 type ByKey []mr.KeyValue
@@ -23,11 +26,12 @@ func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 func main() {
+	//检查参数
 	if len(os.Args) < 3 {
 		fmt.Fprintf(os.Stderr, "Usage: mrsequential xxx.so inputfiles...\n")
 		os.Exit(1)
 	}
-
+	//加载插件
 	mapf, reducef := loadPlugin(os.Args[1])
 
 	//
@@ -37,6 +41,7 @@ func main() {
 	//
 	intermediate := []mr.KeyValue{}
 	for _, filename := range os.Args[2:] {
+		//对传入的文件进行遍历操作
 		file, err := os.Open(filename)
 		if err != nil {
 			log.Fatalf("cannot open %v", filename)
@@ -47,6 +52,7 @@ func main() {
 		}
 		file.Close()
 		kva := mapf(filename, string(content))
+		//将map的结果放入intermediate中
 		intermediate = append(intermediate, kva...)
 	}
 
@@ -55,7 +61,7 @@ func main() {
 	// intermediate data is in one place, intermediate[],
 	// rather than being partitioned into NxM buckets.
 	//
-
+	//这里排序使用的是自定义的排序方法
 	sort.Sort(ByKey(intermediate))
 
 	oname := "mr-out-0"
@@ -67,11 +73,14 @@ func main() {
 	//
 	i := 0
 	for i < len(intermediate) {
+		//j为重复元素的个数
 		j := i + 1
+		//遇到重复的key，j就加1
 		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
 			j++
 		}
 		values := []string{}
+		//其实j已经实现了统计，这里由于value都是相同，所以可以对value进行累加
 		for k := i; k < j; k++ {
 			values = append(values, intermediate[k].Value)
 		}
