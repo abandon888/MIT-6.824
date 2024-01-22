@@ -18,12 +18,41 @@ type ExampleArgs struct {
 	X int
 }
 
+type NArgs struct {
+	NReduce int
+	NMap    int
+}
+
+type MapTask struct {
+	FileName string
+	Index    int
+	NReduce  int
+}
+
+type MapReply struct {
+	FileName string
+	Index    int
+	NReduce  int
+	Content  string
+}
+
+type ReduceTask struct {
+	Index                int
+	NMap                 int
+	IntermediateLocation string
+}
+
+type ReduceReply struct {
+	Index      int
+	NMap       int
+	OutputFile string
+}
+
 type ExampleReply struct {
 	Y int
 }
 
 // Add your RPC definitions here.
-
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
