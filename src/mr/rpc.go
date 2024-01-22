@@ -14,10 +14,6 @@ import "strconv"
 // and reply for an RPC.
 //
 
-type ExampleArgs struct {
-	X int
-}
-
 type NArgs struct {
 	NReduce int
 	NMap    int
@@ -47,12 +43,6 @@ type ReduceReply struct {
 	NMap       int
 	OutputFile string
 }
-
-type ExampleReply struct {
-	Y int
-}
-
-// Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
