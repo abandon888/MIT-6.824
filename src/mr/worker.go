@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -31,6 +32,40 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+// serializeKeyValuePairs: 将key/value对序列化到文件中
+func serializeKeyValuePairs(keyValues []KeyValue, fileName string) error {
+	file, err := os.Create(fileName)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	if err := encoder.Encode(keyValues); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// deserializeKeyValuePairs: 从文件中反序列化key/value对
+func deserializeKeyValuePairs(filename string) ([]KeyValue, error) {
+	var keyValues []KeyValue
+
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&keyValues); err != nil {
+		return nil, err
+	}
+
+	return keyValues, nil
+}
+
 // Worker
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
@@ -54,8 +89,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			sort.Sort(ByKey(intermediate))
 			reduceArgs.Index = ihash(kv.Key) % mapReply.NReduce
 			oname := fmt.Sprintf("mr-%d-%d", mapReply.Index, reduceArgs.Index)
-			ofile, _ := os.Create(oname)
-			fmt.Fprintf(ofile, "%v %v\n", kv.Key, kv.Value)
+			//将map的结果放入intermediate中
+			serializeKeyValuePairs(intermediate, oname)
 			reduceArgs.IntermediateLocation = oname
 			call("Coordinator.PutIntermediate", &reduceArgs, &reduceReply)
 		}
@@ -70,8 +105,11 @@ func Worker(mapf func(string, string) []KeyValue,
 	//循环执行reduce任务
 	for reduceReply.Index != -1 {
 		fmt.Printf("reduceReply.Index: %d\n", reduceReply.Index)
+		oname := fmt.Sprintf("mr-out-%d", reduceReply.Index)
+		ofile, _ := os.Create(oname)
 		//获取reduce任务的结果
-		output := getReduceValue()
+		getReduceValue(reduceArgs, reducef, ofile)
+		ofile.Close()
 		//将reduce任务的结果发送给coordinator
 		call("Coordinator.PutResult", &reduceArgs, &reduceReply)
 		//通知coordinator完成reduce任务
@@ -80,7 +118,12 @@ func Worker(mapf func(string, string) []KeyValue,
 
 }
 
-func getReduceValue() output {
+func getReduceValue(task ReduceTask, reducef func(string, []string) string, ofile *os.File) {
+	//读取中间文件
+	intermediate, err := deserializeKeyValuePairs(task.IntermediateLocation)
+	if err != nil {
+		log.Fatalf("cannot read %v", task.IntermediateLocation)
+	}
 	i := 0
 	for i < len(intermediate) {
 		//j为重复元素的个数
@@ -95,7 +138,8 @@ func getReduceValue() output {
 			values = append(values, intermediate[k].Value)
 		}
 		output := reducef(intermediate[i].Key, values)
-
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
 		i = j
 	}
 }
