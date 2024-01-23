@@ -114,7 +114,7 @@ func (c *Coordinator) PutIntermediate(args *ReduceTask, reply *ReduceReply) erro
 
 // completeMapTask
 // worker通知coordinator完成map任务
-func (c *Coordinator) completeMapTask(args *MapTask, reply *MapReply) error {
+func (c *Coordinator) CompleteMapTask(args *MapTask, reply *MapReply) error {
 	c.mapTasks[args.Index].Status = TaskStatusCompleted
 	return nil
 }
@@ -135,9 +135,9 @@ func (c *Coordinator) GetReduceTask(args *NArgs, reply *ReduceReply) error {
 	return nil
 }
 
-// completeReduceTask
+// CompleteReduceTask
 // worker通知coordinator完成reduce任务
-func (c *Coordinator) completeReduceTask(args *ReduceTask, reply *ReduceReply) error {
+func (c *Coordinator) CompleteReduceTask(args *ReduceTask, reply *ReduceReply) error {
 	c.reduceTasks[args.Index].Status = TaskStatusCompleted
 	return nil
 }

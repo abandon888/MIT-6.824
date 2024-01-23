@@ -96,7 +96,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			call("Coordinator.PutIntermediate", &reduceArgs, &reduceReply)
 		}
 		//通知coordinator完成map任务
-		call("Coordinator.completeMapTask", &mapArgs, &mapReply)
+		call("Coordinator.CompleteMapTask", &mapArgs, &mapReply)
 	}
 	//定义reduce任务
 	reduceArgs := ReduceTask{}
@@ -113,7 +113,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		ofile.Close()
 		//将reduce任务的结果发送给coordinator
 		reduceReply.OutputFile = oname
-		call("Coordinator.completeReduceTask", &reduceArgs, &reduceReply)
+		call("Coordinator.CompleteReduceTask", &reduceArgs, &reduceReply)
 	}
 }
 
