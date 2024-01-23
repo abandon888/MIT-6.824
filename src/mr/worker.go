@@ -74,7 +74,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	//定义map任务
 	mapArgs := MapTask{}
 	mapReply := MapReply{}
-	//与coordinator通信
+	//获取map任务
 	call("Coordinator.GetMapTask", &mapArgs, &mapReply)
 	//循环执行map任务
 	for mapReply.Index != -1 {
@@ -92,15 +92,16 @@ func Worker(mapf func(string, string) []KeyValue,
 			//将map的结果放入intermediate中
 			serializeKeyValuePairs(intermediate, oname)
 			reduceArgs.IntermediateLocation = oname
+			//将map的结果发送给coordinator
 			call("Coordinator.PutIntermediate", &reduceArgs, &reduceReply)
 		}
 		//通知coordinator完成map任务
-		call("Coordinator.GetMapTask", &mapArgs, &mapReply)
+		call("Coordinator.completeMapTask", &mapArgs, &mapReply)
 	}
 	//定义reduce任务
 	reduceArgs := ReduceTask{}
 	reduceReply := ReduceReply{}
-	//与coordinator通信
+	//获取reduce任务
 	call("Coordinator.GetReduceTask", &reduceArgs, &reduceReply)
 	//循环执行reduce任务
 	for reduceReply.Index != -1 {
@@ -111,11 +112,9 @@ func Worker(mapf func(string, string) []KeyValue,
 		getReduceValue(reduceArgs, reducef, ofile)
 		ofile.Close()
 		//将reduce任务的结果发送给coordinator
-		call("Coordinator.PutResult", &reduceArgs, &reduceReply)
-		//通知coordinator完成reduce任务
-		call("Coordinator.GetReduceTask", &reduceArgs, &reduceReply)
+		reduceReply.OutputFile = oname
+		call("Coordinator.completeReduceTask", &reduceArgs, &reduceReply)
 	}
-
 }
 
 func getReduceValue(task ReduceTask, reducef func(string, []string) string, ofile *os.File) {

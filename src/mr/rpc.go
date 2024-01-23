@@ -19,10 +19,24 @@ type NArgs struct {
 	NMap    int
 }
 
+type TaskStatus int
+
+const (
+	TaskStatusNotStarted TaskStatus = iota
+	TaskStatusInProgress
+	TaskStatusCompleted
+)
+
+type WorkerStatus struct {
+	Index int
+	Type  string
+}
+
 type MapTask struct {
 	FileName string
 	Index    int
 	NReduce  int
+	Status   TaskStatus
 }
 
 type MapReply struct {
@@ -36,6 +50,7 @@ type ReduceTask struct {
 	Index                int
 	NMap                 int
 	IntermediateLocation string
+	Status               TaskStatus
 }
 
 type ReduceReply struct {
