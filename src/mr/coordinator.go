@@ -1,15 +1,22 @@
 package mr
 
-import "log"
+import (
+	"log"
+	"sync"
+)
 import "net"
 import "os"
 import "net/rpc"
 import "net/http"
 
 type Coordinator struct {
-	// Your definitions here.
-	mapTasks    []MapTask
-	reduceTasks []ReduceTask
+	mutex     sync.Mutex
+	nMap      int
+	nReduce   int
+	tasks     map[string]ApplyTaskAgr
+	initTasks chan ApplyTaskAgr
+
+	doneCh chan ApplyTaskAgr
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -41,14 +48,11 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	//遍历map任务，如果有未完成的任务，返回false
-	for _, task := range c.mapTasks {
-		if task.Status != TaskStatusCompleted {
-			return false
-		}
+	//遍历task任务，如果有未完成的任务，返回false
+	if len(c.initTasks) != 0 {
+		return false
 	}
-	//遍历reduce任务，如果有未完成的任务，返回false
-	for _, task := range c.reduceTasks {
+	for _, task := range c.tasks {
 		if task.Status != TaskStatusCompleted {
 			return false
 		}
@@ -61,83 +65,39 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
-	c.mapTasks = make([]MapTask, len(files))
-	c.reduceTasks = make([]ReduceTask, nReduce)
-
-	//初始化map任务
-	for i, file := range files {
-		c.mapTasks[i] = MapTask{
-			FileName: file,
-			Index:    i,
-			NReduce:  nReduce,
-			Status:   TaskStatusNotStarted,
-		}
+	c := Coordinator{
+		nReduce:   nReduce,
+		tasks:     make(map[string]ApplyTaskAgr),
+		nMap:      len(files),
+		initTasks: make(chan ApplyTaskAgr),
 	}
-	//初始化reduce任务
-	for i := 0; i < nReduce; i++ {
-		c.reduceTasks[i] = ReduceTask{
-			Index:                i,
-			NMap:                 len(files),
-			IntermediateLocation: "",
-			Status:               TaskStatusNotStarted,
+	//初始化map任务
+	for _, file := range files {
+		initTask := ApplyTaskAgr{
+			fileName: file,
 		}
+		c.initTasks <- initTask
 	}
 	// start the coordinator server
 	c.server()
 	return &c
 }
-
-// GetMapTask
-// worker获取map任务
-func (c *Coordinator) GetMapTask(args *NArgs, reply *MapReply) error {
-	for i, task := range c.mapTasks {
-		if task.Status == TaskStatusNotStarted {
-			reply.FileName = task.FileName
-			reply.Index = task.Index
-			reply.NReduce = task.NReduce
-			reply.Content = ""
-			c.mapTasks[i].Status = TaskStatusInProgress
-			return nil
-		}
+func (c *Coordinator) ApplyTask(args *ApplyTaskAgr, reply *ApplyTaskReply) error {
+	c.mutex.Lock()
+	c.tasks[args.Id] = *args
+	c.mutex.Unlock()
+	switch args.Type {
+	case mapStatus:
+		initTask := <-c.initTasks
+		args.fileName = initTask.fileName
+		reply.NMap = c.nMap
+		reply.NReduce = c.nReduce
+	case reduceStatus:
+	case doneStatus:
+		c.mutex.Lock()
+		c.doneCh <- *args
+		c.mutex.Unlock()
+	default:
 	}
-	reply.Index = -1
-	return nil
-}
-
-// PutIntermediate
-// worker将map任务的结果发送给coordinator
-func (c *Coordinator) PutIntermediate(args *ReduceTask, reply *ReduceReply) error {
-	c.reduceTasks[args.Index].IntermediateLocation = args.IntermediateLocation
-	return nil
-}
-
-// completeMapTask
-// worker通知coordinator完成map任务
-func (c *Coordinator) CompleteMapTask(args *MapTask, reply *MapReply) error {
-	c.mapTasks[args.Index].Status = TaskStatusCompleted
-	return nil
-}
-
-// GetReduceTask
-// worker获取reduce任务
-func (c *Coordinator) GetReduceTask(args *NArgs, reply *ReduceReply) error {
-	for i, task := range c.reduceTasks {
-		if task.Status == TaskStatusNotStarted {
-			reply.Index = task.Index
-			reply.NMap = task.NMap
-			reply.OutputFile = ""
-			c.reduceTasks[i].Status = TaskStatusInProgress
-			return nil
-		}
-	}
-	reply.Index = -1
-	return nil
-}
-
-// CompleteReduceTask
-// worker通知coordinator完成reduce任务
-func (c *Coordinator) CompleteReduceTask(args *ReduceTask, reply *ReduceReply) error {
-	c.reduceTasks[args.Index].Status = TaskStatusCompleted
 	return nil
 }

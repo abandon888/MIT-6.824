@@ -3,8 +3,10 @@ package mr
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"sort"
+	"time"
 )
 import "log"
 import "net/rpc"
@@ -66,62 +68,51 @@ func deserializeKeyValuePairs(filename string) ([]KeyValue, error) {
 	return keyValues, nil
 }
 
-// Worker
-// main/mrworker.go calls this function.
-func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
-	intermediate := []KeyValue{}
-	//定义map任务
-	mapArgs := MapTask{}
-	mapReply := MapReply{}
-	//获取map任务
-	call("Coordinator.GetMapTask", &mapArgs, &mapReply)
-	//循环执行map任务
-	for mapReply.Index != -1 {
-		fmt.Printf("mapReply.Index: %d\n", mapReply.Index)
-		kva := mapf(mapReply.FileName, mapReply.Content)
-		//定义reduce任务
-		reduceArgs := ReduceTask{}
-		reduceReply := ReduceReply{}
-		//使用ihash函数对key进行hash，将相同的key放在一起
-		for _, kv := range kva {
-			intermediate = append(intermediate, kv)
-			sort.Sort(ByKey(intermediate))
-			reduceArgs.Index = ihash(kv.Key) % mapReply.NReduce
-			oname := fmt.Sprintf("mr-%d-%d", mapReply.Index, reduceArgs.Index)
-			//将map的结果放入intermediate中
-			serializeKeyValuePairs(intermediate, oname)
-			reduceArgs.IntermediateLocation = oname
-			//将map的结果发送给coordinator
-			call("Coordinator.PutIntermediate", &reduceArgs, &reduceReply)
-		}
-		//通知coordinator完成map任务
-		call("Coordinator.CompleteMapTask", &mapArgs, &mapReply)
+func getFileContent(filename string) string {
+
+	//对传入的文件进行遍历操作
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", filename)
 	}
-	//定义reduce任务
-	reduceArgs := ReduceTask{}
-	reduceReply := ReduceReply{}
-	//获取reduce任务
-	call("Coordinator.GetReduceTask", &reduceArgs, &reduceReply)
-	//循环执行reduce任务
-	for reduceReply.Index != -1 {
-		fmt.Printf("reduceReply.Index: %d\n", reduceReply.Index)
-		oname := fmt.Sprintf("mr-out-%d", reduceReply.Index)
-		ofile, _ := os.Create(oname)
-		//获取reduce任务的结果
-		getReduceValue(reduceArgs, reducef, ofile)
-		ofile.Close()
-		//将reduce任务的结果发送给coordinator
-		reduceReply.OutputFile = oname
-		call("Coordinator.CompleteReduceTask", &reduceArgs, &reduceReply)
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", filename)
 	}
+	file.Close()
+	return string(content)
+
 }
 
-func getReduceValue(task ReduceTask, reducef func(string, []string) string, ofile *os.File) {
+// MapTask
+func doMapTask(mapf func(string, string) []KeyValue, reply *ApplyTaskReply, arg *ApplyTaskAgr) {
+
+	intermediate := []KeyValue{}
+	content := getFileContent(arg.fileName)
+	arg.startTime = time.Now()
+	arg.Status = TaskStatusInProgress
+
+	kva := mapf(arg.fileName, content)
+	//使用ihash函数对key进行hash，将相同的key放在一起
+	for _, kv := range kva {
+		intermediate = append(intermediate, kv)
+		//reply.Id = ihash(kv.Key) % reply.NReduce //todo:哈希如何处理？
+	}
+	sort.Sort(ByKey(intermediate))
+	oname := fmt.Sprintf("mr-%d-%d", reply.Id, reply.Id) //todo:中间文件应如何命名？
+	//将map的结果放入intermediate中
+	serializeKeyValuePairs(intermediate, oname)
+	reply.IntermediateLocation = oname
+	arg.Status = TaskStatusCompleted
+}
+
+func doReduceTask(reducef func(string, []string) string, reply *ApplyTaskReply, arg *ApplyTaskAgr) {
+	oname := fmt.Sprintf("mr-out-%d", reply.Id) //todo:文件命名怎么搞
+	ofile, _ := os.Create(oname)
 	//读取中间文件
-	intermediate, err := deserializeKeyValuePairs(task.IntermediateLocation)
+	intermediate, err := deserializeKeyValuePairs(reply.IntermediateLocation)
 	if err != nil {
-		log.Fatalf("cannot read %v", task.IntermediateLocation)
+		log.Fatalf("cannot read %v", reply.IntermediateLocation)
 	}
 	i := 0
 	for i < len(intermediate) {
@@ -137,9 +128,43 @@ func getReduceValue(task ReduceTask, reducef func(string, []string) string, ofil
 			values = append(values, intermediate[k].Value)
 		}
 		output := reducef(intermediate[i].Key, values)
-		// this is the correct format for each line of Reduce output.
 		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
 		i = j
+	}
+	ofile.Close()
+	//将reduce任务的结果发送给coordinator
+	reply.outPutFile = oname
+}
+
+// Worker
+// main/mrworker.go calls this function.
+func Worker(mapf func(string, string) []KeyValue,
+	reducef func(string, []string) string) {
+
+	//定义任务
+	applyAgr := ApplyTaskAgr{
+		Id:        time.Now().String(),
+		Status:    TaskStatusNotStarted,
+		startTime: time.Now(),
+		Type:      mapStatus,
+	}
+	applyReply := ApplyTaskReply{
+		Id: applyAgr.Id,
+	}
+	call("Coordinator.ApplyTask", &applyAgr, &applyReply)
+	for {
+		switch applyAgr.Type {
+		case mapStatus:
+			doMapTask(mapf, &applyReply, &applyAgr)
+			call("Coordinator.ApplyTask", &applyAgr, &applyReply)
+		case reduceStatus:
+			doReduceTask(reducef, &applyReply, &applyAgr)
+			call("Coordinator.ApplyTask", &applyAgr, &applyReply)
+		case doneStatus:
+			call("Coordinator.ApplyTask", &applyAgr, &applyReply)
+		default:
+			log.Println("undefined workType")
+		}
 	}
 }
 

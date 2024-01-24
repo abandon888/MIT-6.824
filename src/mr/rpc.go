@@ -6,18 +6,16 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
+import (
+	"os"
+	"time"
+)
 import "strconv"
 
 //
 // example to show how to declare the arguments
 // and reply for an RPC.
 //
-
-type NArgs struct {
-	NReduce int
-	NMap    int
-}
 
 type TaskStatus int
 
@@ -27,36 +25,28 @@ const (
 	TaskStatusCompleted
 )
 
-type WorkerStatus struct {
-	Index int
-	Type  string
-}
+type WorkType int
 
-type MapTask struct {
-	FileName string
-	Index    int
-	NReduce  int
-	Status   TaskStatus
-}
+const (
+	mapStatus WorkType = iota
+	reduceStatus
+	doneStatus
+)
 
-type MapReply struct {
-	FileName string
-	Index    int
-	NReduce  int
-	Content  string
-}
-
-type ReduceTask struct {
-	Index                int
+type ApplyTaskReply struct {
+	Id                   string
+	NReduce              int
 	NMap                 int
-	IntermediateLocation string
-	Status               TaskStatus
+	IntermediateLocation string //中间文件地址
+	outPutFile           string //输出文件地址
 }
 
-type ReduceReply struct {
-	Index      int
-	NMap       int
-	OutputFile string
+type ApplyTaskAgr struct {
+	Id        string
+	Type      WorkType
+	Status    TaskStatus
+	startTime time.Time
+	fileName  string
 }
 
 // Cook up a unique-ish UNIX-domain socket name
