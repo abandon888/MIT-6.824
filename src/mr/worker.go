@@ -3,14 +3,14 @@ package mr
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io/ioutil"
+	"log"
+	"net/rpc"
 	"os"
 	"sort"
 	"time"
 )
-import "log"
-import "net/rpc"
-import "hash/fnv"
 
 type ByKey []KeyValue
 
@@ -37,14 +37,25 @@ func ihash(key string) int {
 // serializeKeyValuePairs: 将key/value对序列化到文件中
 func serializeKeyValuePairs(keyValues []KeyValue, fileName string) error {
 	file, err := os.Create(fileName)
+	//log.Println("serializeKeyValuePairs", fileName)
 	if err != nil {
+		log.Fatalf("cannot create %v", fileName)
 		return err
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			log.Println("close fail", err)
+		}
+	}(file)
 
 	encoder := json.NewEncoder(file)
-	if err := encoder.Encode(keyValues); err != nil {
-		return err
+	for _, kv := range keyValues {
+		err := encoder.Encode(&kv)
+		if err != nil {
+			log.Println("encode fail", err)
+			return err
+		}
 	}
 
 	return nil
@@ -61,8 +72,13 @@ func deserializeKeyValuePairs(filename string) ([]KeyValue, error) {
 	defer file.Close()
 
 	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&keyValues); err != nil {
-		return nil, err
+	for {
+		var kv KeyValue
+		err := decoder.Decode(&kv)
+		if err != nil {
+			break
+		}
+		keyValues = append(keyValues, kv)
 	}
 
 	return keyValues, nil
@@ -86,34 +102,51 @@ func getFileContent(filename string) string {
 
 // MapTask
 func doMapTask(mapf func(string, string) []KeyValue, reply *ApplyTaskReply, arg *ApplyTaskAgr) {
-
-	intermediate := []KeyValue{}
-	content := getFileContent(arg.fileName)
-	arg.startTime = time.Now()
+	//log.Println("map task start", reply.FileName)
+	//intermediate := []KeyValue{}
+	content := getFileContent(reply.FileName)
+	arg.StartTime = time.Now()
 	arg.Status = TaskStatusInProgress
 
-	kva := mapf(arg.fileName, content)
+	kva := mapf(reply.FileName, content)
+	buckets := make([][]KeyValue, reply.NReduce)
 	//使用ihash函数对key进行hash，将相同的key放在一起
 	for _, kv := range kva {
-		intermediate = append(intermediate, kv)
-		//reply.Id = ihash(kv.Key) % reply.NReduce //todo:哈希如何处理？
+		buckets[ihash(kv.Key)%reply.NReduce] = append(buckets[ihash(kv.Key)%reply.NReduce], kv)
 	}
-	sort.Sort(ByKey(intermediate))
-	oname := fmt.Sprintf("mr-%d-%d", reply.Id, reply.Id) //todo:中间文件应如何命名？
+	var oname string
+	//将中间结果放入intermediate中
+	for i, bucket := range buckets {
+		oname = fmt.Sprintf("mr-%d-%d", reply.Id, i)
+		err := serializeKeyValuePairs(bucket, oname)
+		if err != nil {
+			return
+		}
+	}
 	//将map的结果放入intermediate中
-	serializeKeyValuePairs(intermediate, oname)
-	reply.IntermediateLocation = oname
+	//serializeKeyValuePairs(intermediate, oname)
 	arg.Status = TaskStatusCompleted
+	call("Coordinator.MapTaskDone", &arg, &reply)
 }
 
 func doReduceTask(reducef func(string, []string) string, reply *ApplyTaskReply, arg *ApplyTaskAgr) {
-	oname := fmt.Sprintf("mr-out-%d", reply.Id) //todo:文件命名怎么搞
+
+	arg.StartTime = time.Now()
+	arg.Status = TaskStatusInProgress
+
+	oname := fmt.Sprintf("mr-out-%d", reply.Id)
 	ofile, _ := os.Create(oname)
 	//读取中间文件
-	intermediate, err := deserializeKeyValuePairs(reply.IntermediateLocation)
-	if err != nil {
-		log.Fatalf("cannot read %v", reply.IntermediateLocation)
+	var intermediate []KeyValue
+	for i := 0; i < reply.NMap; i++ {
+		fileName := fmt.Sprintf("mr-%d-%d", i, reply.Id)
+		kva, err := deserializeKeyValuePairs(fileName)
+		if err != nil {
+			log.Fatalf("Do Reduce:cannot read %v", fileName)
+		}
+		intermediate = append(intermediate, kva...)
 	}
+	sort.Sort(ByKey(intermediate))
 	i := 0
 	for i < len(intermediate) {
 		//j为重复元素的个数
@@ -122,46 +155,46 @@ func doReduceTask(reducef func(string, []string) string, reply *ApplyTaskReply, 
 		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
 			j++
 		}
-		values := []string{}
+		var values []string
 		//其实j已经实现了统计，这里由于value都是相同，所以可以对value进行累加
 		for k := i; k < j; k++ {
 			values = append(values, intermediate[k].Value)
 		}
 		output := reducef(intermediate[i].Key, values)
-		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+		_, err := fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+		if err != nil {
+			return
+		}
 		i = j
 	}
-	ofile.Close()
+	err := ofile.Close()
+	if err != nil {
+		return
+	}
 	//将reduce任务的结果发送给coordinator
-	reply.outPutFile = oname
+	arg.Status = TaskStatusCompleted
+	call("Coordinator.ReduceTaskDone", &arg, &reply)
 }
 
 // Worker
 // main/mrworker.go calls this function.
-func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
-
-	//定义任务
-	applyAgr := ApplyTaskAgr{
-		Id:        time.Now().String(),
-		Status:    TaskStatusNotStarted,
-		startTime: time.Now(),
-		Type:      mapStatus,
-	}
-	applyReply := ApplyTaskReply{
-		Id: applyAgr.Id,
-	}
-	call("Coordinator.ApplyTask", &applyAgr, &applyReply)
+func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	for {
-		switch applyAgr.Type {
+		//定义任务
+		applyAgr := ApplyTaskAgr{
+			Id:        generateId(),
+			Status:    TaskStatusNotStarted,
+			StartTime: time.Now(),
+		}
+		applyReply := ApplyTaskReply{}
+		call("Coordinator.ApplyTask", &applyAgr, &applyReply)
+		switch applyReply.Type {
 		case mapStatus:
 			doMapTask(mapf, &applyReply, &applyAgr)
-			call("Coordinator.ApplyTask", &applyAgr, &applyReply)
 		case reduceStatus:
 			doReduceTask(reducef, &applyReply, &applyAgr)
-			call("Coordinator.ApplyTask", &applyAgr, &applyReply)
 		case doneStatus:
-			call("Coordinator.ApplyTask", &applyAgr, &applyReply)
+			return
 		default:
 			log.Println("undefined workType")
 		}

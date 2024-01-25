@@ -8,9 +8,9 @@ package mr
 
 import (
 	"os"
+	"strconv"
 	"time"
 )
-import "strconv"
 
 //
 // example to show how to declare the arguments
@@ -33,20 +33,21 @@ const (
 	doneStatus
 )
 
+// 注意全要大写，不然无法导出
 type ApplyTaskReply struct {
-	Id                   string
-	NReduce              int
-	NMap                 int
-	IntermediateLocation string //中间文件地址
-	outPutFile           string //输出文件地址
+	Id       int
+	NReduce  int
+	NMap     int
+	Type     WorkType
+	FileName string //map任务的文件名
 }
 
 type ApplyTaskAgr struct {
-	Id        string
-	Type      WorkType
-	Status    TaskStatus
-	startTime time.Time
-	fileName  string
+	Id                   string
+	Status               TaskStatus
+	StartTime            time.Time
+	IntermediateLocation string //中间文件地址
+	OutPutFile           string //输出文件地址
 }
 
 // Cook up a unique-ish UNIX-domain socket name
@@ -54,7 +55,12 @@ type ApplyTaskAgr struct {
 // Can't use the current directory since
 // Athena AFS doesn't support UNIX-domain sockets.
 func coordinatorSock() string {
-	s := "/var/tmp/5840-mr-"
+	s := "/var/tmp/824-mr-"
 	s += strconv.Itoa(os.Getuid())
 	return s
+}
+
+// 生成id
+func generateId() string {
+	return strconv.Itoa(os.Getuid()) + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
