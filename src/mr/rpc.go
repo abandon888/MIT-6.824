@@ -40,14 +40,25 @@ type ApplyTaskReply struct {
 	NMap     int
 	Type     WorkType
 	FileName string //map任务的文件名
+	TaskId   string //任务id
 }
 
 type ApplyTaskAgr struct {
-	Id                   string
-	Status               TaskStatus
-	StartTime            time.Time
-	IntermediateLocation string //中间文件地址
-	OutPutFile           string //输出文件地址
+	TaskId    string
+	Status    TaskStatus
+	StartTime time.Time
+	Type      WorkType
+	WorkId    int
+	FileName  string
+}
+
+type RenameFileAgr struct {
+	OldName string
+	NewName string
+}
+
+type RenameFileReply struct {
+	NewName string
 }
 
 // Cook up a unique-ish UNIX-domain socket name
@@ -55,12 +66,19 @@ type ApplyTaskAgr struct {
 // Can't use the current directory since
 // Athena AFS doesn't support UNIX-domain sockets.
 func coordinatorSock() string {
-	s := "/var/tmp/824-mr-"
+	s := "/var/tmp/5840-mr-"
 	s += strconv.Itoa(os.Getuid())
 	return s
 }
 
-// 生成id
-func generateId() string {
-	return strconv.Itoa(os.Getuid()) + strconv.FormatInt(time.Now().UnixNano(), 10)
+// 生成TaskId,格式为：工作类型+工作id
+func generateTaskId(workType WorkType, id int) string {
+	return strconv.Itoa(int(workType)) + "-" + strconv.Itoa(id)
+}
+
+// 解析TaskId
+func parseTaskId(taskId string) (WorkType, int) {
+	workType, _ := strconv.Atoi(string(taskId[0]))
+	id, _ := strconv.Atoi(taskId[2:])
+	return WorkType(workType), id
 }
