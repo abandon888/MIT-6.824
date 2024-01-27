@@ -7,6 +7,7 @@ package main
 //
 
 import (
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ func Reduce(key string, values []string) string {
 	// a worker will accidentally exit early
 	if strings.Contains(key, "sherlock") || strings.Contains(key, "tom") {
 		time.Sleep(time.Duration(3 * time.Second))
+		log.Println("sleeping for 3 seconds")
 	}
 	// return the number of occurrences of this file.
 	return strconv.Itoa(len(values))

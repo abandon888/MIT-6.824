@@ -19,6 +19,9 @@ type Coordinator struct {
 	tasks       map[string]ApplyTaskAgr //任务列表
 	mapTasks    chan ApplyTaskReply
 	reduceTasks chan ApplyTaskReply
+
+	mapDone    chan ApplyTaskAgr
+	reduceDone chan ApplyTaskAgr
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -71,6 +74,9 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		nMap:        len(files),
 		mapTasks:    make(chan ApplyTaskReply, int(math.Max(float64(len(files)), float64(nReduce)))), //管道阻塞的问题
 		reduceTasks: make(chan ApplyTaskReply, int(math.Max(float64(len(files)), float64(nReduce)))),
+
+		mapDone:    make(chan ApplyTaskAgr, int(math.Max(float64(len(files)), float64(nReduce)))),
+		reduceDone: make(chan ApplyTaskAgr, int(math.Max(float64(len(files)), float64(nReduce)))),
 	}
 	//初始化map任务
 	for i, file := range files {
@@ -103,18 +109,9 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 }
 
 func (c *Coordinator) ApplyTask(args *ApplyTaskAgr, reply *ApplyTaskReply) error {
-	var remainMapTask int
-	var remainReduceTask int
 	c.mutex.Lock()
 	//检查是否有超时的任务和未完成的任务
 	for _, task := range c.tasks {
-		if task.Status == TaskStatusInProgress {
-			if task.Type == mapStatus {
-				remainMapTask++
-			} else if task.Type == reduceStatus {
-				remainReduceTask++
-			}
-		}
 		if task.Status == TaskStatusInProgress && time.Now().Sub(task.StartTime) > 10*time.Second {
 			log.Println("task timeout", task)
 			if task.Type == mapStatus {
@@ -144,7 +141,6 @@ func (c *Coordinator) ApplyTask(args *ApplyTaskAgr, reply *ApplyTaskReply) error
 	c.mutex.Unlock()
 	//如果map任务还没完成，就分配map任务
 	if len(c.mapTasks) > 0 {
-		//log.Println("map task apply", args)
 		initTask := <-c.mapTasks
 		reply.Id = initTask.Id
 		reply.FileName = initTask.FileName
@@ -157,9 +153,10 @@ func (c *Coordinator) ApplyTask(args *ApplyTaskAgr, reply *ApplyTaskReply) error
 		args.WorkId = initTask.Id
 		args.FileName = initTask.FileName
 		args.TaskId = initTask.TaskId
+		log.Println("map task apply", args, "remain map task", len(c.mapTasks))
 		c.updateTaskStatus(args)
 		return nil
-	} else if len(c.reduceTasks) > 0 && remainMapTask == 0 {
+	} else if len(c.reduceTasks) > 0 && len(c.mapDone) == c.nMap {
 		//如果map任务完成，就分配reduce任务
 		reduceTask := <-c.reduceTasks
 		reply.Id = reduceTask.Id
@@ -173,7 +170,7 @@ func (c *Coordinator) ApplyTask(args *ApplyTaskAgr, reply *ApplyTaskReply) error
 		args.TaskId = reduceTask.TaskId
 		c.updateTaskStatus(args)
 		return nil
-	} else if remainMapTask == 0 && remainReduceTask == 0 {
+	} else if len(c.reduceTasks) == 0 && len(c.reduceDone) == c.nReduce {
 		//如果reduce任务完成，就返回done
 		reply.Type = doneStatus
 		//args.Type = doneStatus
@@ -181,20 +178,44 @@ func (c *Coordinator) ApplyTask(args *ApplyTaskAgr, reply *ApplyTaskReply) error
 		//c.updateTaskStatus(args)
 		return nil
 	} else {
-		//log.Println("no task to apply")
+		log.Println("no task to apply")
+		reply.Type = waitStatus
 		return nil
 	}
 }
 
 func (c *Coordinator) MapTaskDone(args *ApplyTaskAgr, reply *ApplyTaskReply) error {
-	log.Println("map task done", args)
-	c.updateTaskStatus(args)
+
+	//检查任务是否超时
+	if time.Now().Sub(args.StartTime) < 10*time.Second {
+		log.Println("map task done", args)
+		defer func() {
+			if recover() != nil {
+				// 如果这里的代码被执行，那么说明向管道写入数据时发生了 panic
+				// 这里将 panic 恢复，防止程序崩溃
+				log.Println("map task done panic")
+				close(c.mapDone)
+			}
+		}()
+		c.mapDone <- *args
+		c.updateTaskStatus(args)
+		return nil
+	}
+
+	log.Println("Done: map task timeout", args)
 	return nil
+
 }
 
 func (c *Coordinator) ReduceTaskDone(args *ApplyTaskAgr, reply *ApplyTaskReply) error {
-	log.Println("reduce task done", args)
-	c.updateTaskStatus(args)
+
+	//检查任务是否超时
+	if time.Now().Sub(args.StartTime) < 10*time.Second {
+		log.Println("reduce task done", args)
+		c.reduceDone <- *args
+		c.updateTaskStatus(args)
+		return nil
+	}
 	return nil
 }
 

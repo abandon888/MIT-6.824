@@ -74,10 +74,10 @@ rm -f mr-*
 
 failed_any=0
 
-#########################################################
-# first word-count
+##########################################################
+ first word-count
 
-# generate the correct output
+ generate the correct output
 ../mrsequential ../../mrapps/wc.so ../pg*txt || exit 1
 sort mr-out-0 > mr-correct-wc.txt
 rm -f mr-out*
@@ -113,7 +113,7 @@ fi
 # wait for remaining workers and coordinator to exit.
 wait
 #
-#########################################################
+##########################################################
 # now indexer
 rm -f mr-*
 
@@ -197,7 +197,7 @@ fi
 
 wait
 
-#########################################################
+########################################################
 echo '***' Starting job count test.
 
 rm -f mr-*
@@ -289,6 +289,7 @@ sort mr-out-0 > mr-correct-crash.txt
 rm -f mr-out*
 
 rm -f mr-done
+# shellcheck disable=SC1105
 ((maybe_quiet $TIMEOUT2 ../mrcoordinator ../pg*txt); touch mr-done ) &
 sleep 1
 

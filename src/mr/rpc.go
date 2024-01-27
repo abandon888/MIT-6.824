@@ -31,6 +31,7 @@ const (
 	mapStatus WorkType = iota
 	reduceStatus
 	doneStatus
+	waitStatus
 )
 
 // 注意全要大写，不然无法导出

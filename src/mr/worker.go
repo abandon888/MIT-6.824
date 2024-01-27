@@ -98,7 +98,7 @@ func getFileContent(filename string) string {
 	//对传入的文件进行遍历操作
 	file, err := os.Open(filename)
 	if err != nil {
-		log.Fatalf("cannot open %v", filename)
+		log.Fatalf("doMap:cannot open %v", filename)
 	}
 	content, err := ioutil.ReadAll(file)
 	if err != nil {
@@ -205,6 +205,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		}
 		applyReply := ApplyTaskReply{}
 		call("Coordinator.ApplyTask", &applyAgr, &applyReply)
+		applyAgr.TaskId = applyReply.TaskId
 		applyAgr.WorkId = applyReply.Id
 		applyAgr.Type = applyReply.Type
 		switch applyReply.Type {
@@ -216,9 +217,9 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			//time.Sleep(2000 * time.Millisecond)
 			log.Println("all task done")
 			return
-		default:
-			log.Println("undefined workType")
-			time.Sleep(200 * time.Millisecond)
+		case waitStatus:
+			log.Println("no task to do")
+			time.Sleep(3 * time.Second)
 		}
 		time.Sleep(200 * time.Millisecond) //防止频繁请求
 	}
