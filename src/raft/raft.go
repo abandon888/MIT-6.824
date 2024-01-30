@@ -187,9 +187,11 @@ type RequestVoteReply struct {
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	// If RPC request or response contains term T < currentTerm: return false
+
 	log.SetPrefix("RequestVote: ")
 	//log.Println("server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus)
+	// If RPC request or response contains term T < currentTerm: return false
+	//Reply false if term < currentTerm (§5.1)
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
@@ -197,11 +199,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	// If RPC request or response contains term T > currentTerm: set currentTerm = T, convert to follower
 	if args.Term > rf.currentTerm {
-		rf.mu.Lock()
-		rf.currentTerm = args.Term
-		rf.votedFor = -1
-		rf.electionStatus = follower
-		rf.mu.Unlock()
+		rf.convertToFollower(args.Term)
 	}
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		rf.mu.Lock()
@@ -224,6 +222,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.mu.Unlock()
 	}
 	// If RPC request or response contains term T < currentTerm: return false
+	//Reply false if term < currentTerm (§5.1)
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Success = false
@@ -231,11 +230,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	// If RPC request or response contains term T > currentTerm: set currentTerm = T, convert to follower
 	if args.Term > rf.currentTerm {
-		rf.mu.Lock()
-		rf.currentTerm = args.Term
-		rf.votedFor = -1
-		rf.electionStatus = follower
-		rf.mu.Unlock()
+		rf.convertToFollower(args.Term)
 	}
 
 	reply.Term = rf.currentTerm
@@ -278,7 +273,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	//how to deal with reply?save it to rf?
 	log.SetPrefix("sendRequestVote: ")
 	log.Printf("server %d send request vote to server %d,in term %d,get %v", rf.me, server, reply.Term, reply.VoteGranted)
-	//if get vote,then voteGranted++
+	//if you get vote,then voteGranted++
 	if reply.VoteGranted {
 		rf.mu.Lock()
 		rf.voteGranted++
@@ -286,20 +281,18 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 		// If votes received from majority of servers: become leader
 		if rf.voteGranted > len(rf.peers)/2 {
 			log.Println("server ", rf.me, "become leader", "in term", rf.currentTerm, "with", rf.voteGranted, "votes")
-			rf.mu.Lock()
-			rf.electionStatus = leader
-			rf.mu.Unlock()
+			rf.convertToLeader()
 		}
 
 	}
-	//if get higher term,then convert to follower
-	if reply.Term > rf.currentTerm {
-		rf.mu.Lock()
-		rf.currentTerm = reply.Term
-		rf.votedFor = -1
-		rf.electionStatus = follower
-		rf.mu.Unlock()
-	}
+	//if you get higher term,then convert to follower
+	//if reply.Term > rf.currentTerm {
+	//	rf.mu.Lock()
+	//	rf.currentTerm = reply.Term
+	//	rf.votedFor = -1
+	//	rf.electionStatus = follower
+	//	rf.mu.Unlock()
+	//}
 	return ok
 }
 
@@ -307,15 +300,27 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	//if reply term is higher,then convert to follower
 	if reply.Term > rf.currentTerm {
-		rf.mu.Lock()
-		rf.currentTerm = reply.Term
-		rf.votedFor = -1
-		rf.electionStatus = follower
-		rf.mu.Unlock()
+		rf.convertToFollower(reply.Term)
 	}
 	log.SetPrefix("sendAppendEntries: ")
 	log.Printf("server %d send append entries to server %d,in term %d,get %v", rf.me, server, reply.Term, reply.Success)
 	return ok
+}
+
+// convert to follower
+func (rf *Raft) convertToFollower(term int) {
+	rf.mu.Lock()
+	rf.currentTerm = term
+	rf.votedFor = -1
+	rf.electionStatus = follower
+	rf.mu.Unlock()
+}
+
+// convert to leader
+func (rf *Raft) convertToLeader() {
+	rf.mu.Lock()
+	rf.electionStatus = leader
+	rf.mu.Unlock()
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -363,14 +368,14 @@ func (rf *Raft) killed() bool {
 
 // electionTicker is the ticker goroutine for Raft.
 func (rf *Raft) electionTicker() {
-	timeout := time.Duration(520+rand.Intn(150)) * time.Millisecond
+	timeout := time.Duration(400+rand.Intn(150)) * time.Millisecond
 	time.Sleep(timeout)
 }
 
 func (rf *Raft) startElection() {
 	rf.resetElectionTimer()
 	log.SetPrefix("startElection: ")
-	log.Println("server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus)
+	log.Println("\u001B[42m server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus, "\u001B[0m")
 	if rf.electionStatus == follower {
 		rf.electionStatus = candidate
 		rf.currentTerm++
@@ -378,6 +383,7 @@ func (rf *Raft) startElection() {
 		// send RequestVote RPCs to all other servers
 		rf.votedFor = rf.me
 		for i, _ := range rf.peers {
+			log.Println("server ", rf.me, "send request vote to server", i)
 			rf.sendRequestVote(i, &RequestVoteArgs{rf.currentTerm, rf.me, len(rf.log), rf.currentTerm}, &RequestVoteReply{})
 		}
 		rf.currentTerm++
@@ -421,7 +427,6 @@ func (rf *Raft) ticker() {
 		// milliseconds.
 		ms := 50 + (rand.Int63() % 300)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
-
 	}
 }
 
