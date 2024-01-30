@@ -217,9 +217,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // AppendEntries RPC handler.
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	if rf.electionStatus == candidate {
-		rf.mu.Lock()
-		rf.electionStatus = follower
-		rf.mu.Unlock()
+		rf.convertToFollower(args.Term)
 	}
 	// If RPC request or response contains term T < currentTerm: return false
 	//Reply false if term < currentTerm (§5.1)
@@ -286,13 +284,9 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 	}
 	//if you get higher term,then convert to follower
-	//if reply.Term > rf.currentTerm {
-	//	rf.mu.Lock()
-	//	rf.currentTerm = reply.Term
-	//	rf.votedFor = -1
-	//	rf.electionStatus = follower
-	//	rf.mu.Unlock()
-	//}
+	if reply.Term > rf.currentTerm {
+		rf.convertToFollower(reply.Term)
+	}
 	return ok
 }
 
@@ -441,20 +435,19 @@ func (rf *Raft) ticker() {
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	rf := &Raft{}
-	rf.peers = peers
-	rf.persister = persister
-	rf.me = me
-
 	// Your initialization code here (2A, 2B, 2C).
-	rf.currentTerm = 0
-	rf.votedFor = -1
-	rf.log = make([]interface{}, 0)
-	rf.commitIndex = 0
-	rf.lastApplied = 0
-	rf.nextIndex = make([]int, 0)
-	rf.matchIndex = make([]int, 0)
-	rf.resetChan = make(chan struct{}, 1)
+	rf := &Raft{
+		peers:     peers,
+		persister: persister,
+		me:        me,
+
+		currentTerm:    0,
+		votedFor:       -1,
+		log:            make([]interface{}, 0),
+		electionStatus: follower,
+		voteGranted:    0,
+		resetChan:      make(chan struct{}, 1),
+	}
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
