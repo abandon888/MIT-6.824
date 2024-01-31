@@ -209,7 +209,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = true
 		rf.mu.Unlock()
 		//log.Println("After RV:server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus)
-		rf.resetElectionTimer()
+		rf.restartElection()
 		return
 	}
 
@@ -234,7 +234,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	reply.Term = rf.currentTerm
 	reply.Success = true
-	rf.resetElectionTimer()
+	rf.restartElection()
 	return
 }
 
@@ -306,7 +306,7 @@ func (rf *Raft) convertToFollower(term int) {
 	rf.currentTerm = term
 	rf.votedFor = -1
 	rf.electionStatus = follower
-	rf.resetElectionTimer()
+	rf.restartElection()
 	rf.mu.Unlock()
 }
 
@@ -403,35 +403,36 @@ func (rf *Raft) startHeartBeat() {
 	}()
 }
 
-func (rf *Raft) startElection() {
-	// todo: reset election timer when initialize
-	log.SetPrefix("startElection: ")
-	log.Println("\u001B[42m server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus, "\u001B[0m")
-	if rf.electionStatus == follower {
-		//If election timeout elapses without receiving AppendEntries RPC from current leader or granting vote to candidate: convert to candidate
-
-		rf.electionStatus = candidate
-	} else if rf.electionStatus == candidate {
-		rf.currentTerm++
-		// send RequestVote RPCs to all other servers
-		rf.votedFor = rf.me
-		for i, _ := range rf.peers {
-			log.Println("server ", rf.me, "send request vote to server", i)
-			//except me(cannot do that,as voteGranted logic is in sendRequestVote)
-			//if i == rf.me {
-			//	continue
-			//}
-			rf.sendRequestVote(i, &RequestVoteArgs{rf.currentTerm, rf.me, len(rf.log), rf.currentTerm}, &RequestVoteReply{})
+// send request vote to all peers
+func (rf *Raft) sendRequestVoteToAll() {
+	for i, _ := range rf.peers {
+		//except me
+		if i == rf.me {
+			continue
 		}
-		rf.voteGranted = 0
-	} else if rf.electionStatus == leader {
-		log.Println("server ", rf.me, "is leader,so do not need to start election")
-		return
+		rf.sendRequestVote(i, &RequestVoteArgs{rf.currentTerm, rf.me, len(rf.log), rf.currentTerm}, &RequestVoteReply{})
 	}
 }
 
-func (rf *Raft) resetElectionTimer() {
+func (rf *Raft) startElection() {
+	log.SetPrefix("startElection: ")
+	log.Println("\u001B[42m server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus, "\u001B[0m")
+	rf.currentTerm++
+	rf.electionStatus = candidate
+	rf.votedFor = rf.me
+	rf.voteGranted = 1
+	rf.sendRequestVoteToAll()
+	rf.resetElectionTimer()
+}
+
+// restart election timer
+func (rf *Raft) restartElection() {
 	rf.resetChan <- struct{}{}
+}
+
+// reset election timer to a random time
+func (rf *Raft) resetElectionTimer() {
+	rf.electionTimer.Reset(time.Duration(400+rand.Intn(150)) * time.Millisecond)
 }
 
 // stop election timer
@@ -448,19 +449,20 @@ func (rf *Raft) ticker() {
 
 		select {
 		case <-rf.electionTimer.C:
+			rf.mu.Lock()
 			rf.startElection()
+			rf.mu.Unlock()
 		case <-rf.resetChan:
 			if !rf.electionTimer.Stop() {
 				log.Println("\033[42m receive beats,so re elect\033[0m")
 				<-rf.electionTimer.C
 			}
-			continue
+			rf.resetElectionTimer()
 		}
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
 		ms := 50 + (rand.Int63() % 300)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
-		rf.resetElectionTimer()
 	}
 
 }
