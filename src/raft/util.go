@@ -28,3 +28,30 @@ func setupLogging() *log.Logger {
 
 	return testLogger
 }
+
+// use direct ansi code to print yellow
+func PrintYellow(msg string) {
+	log.Printf("\033[33m%s\033[0m", msg)
+}
+
+// use direct ansi code to print red
+func PrintRed(msg string) {
+	log.Printf("\033[31m%s\033[0m", msg)
+}
+
+// use direct ansi code to print green
+func PrintGreen(msg string) {
+	log.Printf("\033[32m%s\033[0m", msg)
+}
+
+// use direct ansi code to print blue
+func PrintBlue(msg string) {
+	log.Printf("\033[34m%s\033[0m", msg)
+}
+
+// use # line to log important info
+func PrintImportant(msg string) {
+	log.Println("##################################################################")
+	log.Println(msg)
+	log.Println("##################################################################")
+}

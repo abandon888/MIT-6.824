@@ -20,6 +20,8 @@ package raft
 
 import (
 	"log"
+	"strconv"
+
 	//	"bytes"
 	"math/rand"
 	"sync"
@@ -218,21 +220,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
-	// If RPC request or response contains term T < currentTerm: return false
-	//Reply false if term < currentTerm (§5.1)
-	if args.Term < rf.currentTerm {
-		reply.Term = rf.currentTerm
-		reply.Success = false
-	} else {
-		// If RPC request or response contains term T > currentTerm: set currentTerm = T, convert to follower
-		if rf.electionStatus == candidate || rf.electionStatus == follower || args.Term > rf.currentTerm {
-			rf.convertToFollower(args.Term)
-		}
-		reply.Term = rf.currentTerm
-		reply.Success = true
+	if rf.electionStatus == leader {
+		PrintYellow("leader " + strconv.Itoa(rf.me) + "receive append entries from server(leader) " + strconv.Itoa(args.LeaderId) + "in term" + strconv.Itoa(args.Term))
 	}
-
+	if args.Term >= rf.currentTerm {
+		rf.convertToFollower(args.Term)
+		reply.Success = true
+	} else {
+		reply.Success = false
+	}
+	reply.Term = rf.currentTerm
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -289,6 +286,9 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	log.SetPrefix("sendAppendEntries: ")
 	log.Printf("before:server %d send append entries to server %d,in term %d", rf.me, server, args.Term)
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	if !ok {
+		PrintRed("server " + strconv.Itoa(rf.me) + "send append entries to server " + strconv.Itoa(server) + "failed")
+	}
 	//if reply term is higher,then convert to follower
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -301,11 +301,12 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 
 // convert to follower
 func (rf *Raft) convertToFollower(term int) {
-	log.Println("server ", rf.me, "convert to follower")
+
 	//rf.mu.Lock()
 	rf.currentTerm = term
 	rf.votedFor = -1
 	rf.electionStatus = follower
+	log.Println("server ", rf.me, "convert to follower", "in term", rf.currentTerm, "with status", rf.electionStatus)
 	rf.resetElectionTimer()
 	//rf.mu.Unlock()
 }
@@ -317,8 +318,9 @@ func (rf *Raft) convertToCandidate() {
 	rf.votedFor = rf.me
 	rf.electionStatus = candidate
 	rf.voteGranted = 1
-	//rf.resetElectionTimer()
 	rf.mu.Unlock()
+	log.Println("server ", rf.me, "convert to candidate", "in term", rf.currentTerm, "with status", rf.electionStatus)
+	rf.resetElectionTimer()
 }
 
 // convert to leader
@@ -330,7 +332,6 @@ func (rf *Raft) convertToLeader() {
 	rf.mu.Unlock()
 	log.Println("server ", rf.me, "stop election timer", "in term", rf.currentTerm, "with status", rf.electionStatus)
 	rf.startHeartBeat()
-
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -395,7 +396,7 @@ func (rf *Raft) startHeartBeat() {
 	go func() {
 		for {
 			rf.sendHeartBeat()
-			timeout := time.Duration(400+rand.Intn(100)) * time.Millisecond
+			timeout := time.Duration(520+rand.Intn(150)) * time.Millisecond
 			time.Sleep(timeout)
 		}
 	}()
@@ -403,36 +404,51 @@ func (rf *Raft) startHeartBeat() {
 
 // send request vote to all peers
 func (rf *Raft) sendRequestVoteToAll() {
-	for i, _ := range rf.peers {
-		//except me
+	PrintBlue("server " + strconv.Itoa(rf.me) + " send request vote to all peers")
+	var wg sync.WaitGroup
+	rf.mu.Lock()
+	currentTerm := rf.currentTerm
+	rf.mu.Unlock()
+
+	for i := range rf.peers {
+		// Except self
 		if i == rf.me {
 			continue
 		}
-		rf.sendRequestVote(i, &RequestVoteArgs{rf.currentTerm, rf.me, len(rf.log), rf.currentTerm}, &RequestVoteReply{})
+
+		wg.Add(1)
+		go func(server int) {
+			defer wg.Done()
+			ok := rf.sendRequestVote(server, &RequestVoteArgs{currentTerm, rf.me, len(rf.log), currentTerm}, &RequestVoteReply{})
+			if ok {
+				rf.mu.Lock()
+				if rf.voteGranted > len(rf.peers)/2 && rf.electionStatus == candidate {
+					log.Println("\u001B[31m server ", rf.me, "become leader in term", currentTerm, "with", rf.voteGranted, "votes \u001B[0m")
+					rf.convertToLeader()
+				}
+				rf.mu.Unlock()
+			}
+		}(i)
 	}
-	// If votes received from majority of servers: become leader
-	if rf.voteGranted > len(rf.peers)/2 {
-		log.Println("\u001B[31m server ", rf.me, "become leader", "in term", rf.currentTerm, "with", rf.voteGranted, "votes \u001B[0m")
-		rf.convertToLeader()
-	}
+
+	wg.Wait() // Wait for all goroutines to finish
 }
 
 func (rf *Raft) startElection() {
 	log.SetPrefix("startElection: ")
-	log.Println("\u001B[42m server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus, "\u001B[0m")
 	rf.convertToCandidate()
+	log.Println("\u001B[42m server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus, "\u001B[0m")
 	rf.sendRequestVoteToAll()
-	rf.resetElectionTimer()
 }
 
-// restart election timer
-func (rf *Raft) restartElection() {
+// reset election timer, send a signal to election timer and call resetElectionTimeout
+func (rf *Raft) resetElectionTimer() {
 	rf.resetChan <- struct{}{}
 }
 
 // reset election timer to a random time
-func (rf *Raft) resetElectionTimer() {
-	rf.electionTimer.Reset(time.Duration(400+rand.Intn(150)) * time.Millisecond)
+func (rf *Raft) resetElectionTimeout() {
+	rf.electionTimer.Reset(time.Duration(520+rand.Intn(150)) * time.Millisecond)
 }
 
 // stop election timer
@@ -457,10 +473,11 @@ func (rf *Raft) ticker() {
 			case <-rf.electionTimer.C:
 				rf.startElection()
 			case <-rf.resetChan:
-				if !rf.electionTimer.Stop() {
-					<-rf.electionTimer.C
-					rf.resetElectionTimer()
+				// 确保在重置计时器之前先停止计时器并清空其通道
+				if !rf.electionTimer.Stop() && len(rf.electionTimer.C) > 0 {
+					<-rf.electionTimer.C // 清空通道
 				}
+				rf.resetElectionTimeout()
 			}
 		}
 
@@ -494,7 +511,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		electionStatus: follower,
 		voteGranted:    0,
 		resetChan:      make(chan struct{}, 1),
-		electionTimer:  time.NewTimer(time.Duration(400+rand.Intn(150)) * time.Millisecond),
+		electionTimer:  time.NewTimer(time.Duration(520+rand.Intn(150)) * time.Millisecond),
 	}
 
 	// initialize from state persisted before a crash
