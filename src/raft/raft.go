@@ -220,7 +220,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if rf.electionStatus == leader {
-		PrintYellow("leader " + strconv.Itoa(rf.me) + "receive append entries from server(leader) " + strconv.Itoa(args.LeaderId) + "in term" + strconv.Itoa(args.Term))
+		//PrintYellow("leader " + strconv.Itoa(rf.me) + "receive append entries from server(leader) " + strconv.Itoa(args.LeaderId) + "in term" + strconv.Itoa(args.Term))
+		Debug(dInfo, "S%d receive append entries from server(leader) %d in term %d", rf.me, args.LeaderId, args.Term)
 	}
 	if args.Term >= rf.currentTerm {
 		rf.convertToFollower(args.Term)
@@ -275,7 +276,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 		if reply.VoteGranted {
 			rf.voteGranted++
 		}
-		//log.Printf("S%d send request vote to S%d, in term %d, get %v", rf.me, server, reply.Term, reply.VoteGranted)
 		Debug(dVote, "S%d send request vote to S%d, in term %d, get %v", rf.me, server, reply.Term, reply.VoteGranted)
 	}
 
@@ -283,7 +283,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	Debug(dLeader, "S%d send append entries to S%d,in term %d", rf.me, server, args.Term)
+	Debug(dAppend, "S%d send append entries to S%d,in term %d", rf.me, server, args.Term)
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	if !ok {
 		//PrintRed("server " + strconv.Itoa(rf.me) + "send append entries to server " + strconv.Itoa(server) + "failed")
@@ -384,13 +384,21 @@ func (rf *Raft) killed() bool {
 
 // send heartbeat to all peers
 func (rf *Raft) sendHeartBeat() {
-	//log.Println("send heartbeat in term", rf.currentTerm)
-	for i, _ := range rf.peers {
-		//except me
+	//use go routine to send heartbeat to all peers
+	for i := range rf.peers {
 		if i == rf.me {
 			continue
 		}
-		rf.sendAppendEntries(i, &AppendEntriesArgs{rf.currentTerm, rf.me, len(rf.log), rf.currentTerm, nil, rf.commitIndex}, &AppendEntriesReply{})
+		go func(server int) {
+			rf.mu.Lock()
+			args := &AppendEntriesArgs{
+				Term:     rf.currentTerm,
+				LeaderId: rf.me,
+			}
+			reply := &AppendEntriesReply{}
+			rf.mu.Unlock()
+			rf.sendAppendEntries(server, args, reply)
+		}(i)
 	}
 }
 
@@ -401,7 +409,7 @@ func (rf *Raft) startHeartBeat() {
 	go func() {
 		for {
 			rf.sendHeartBeat()
-			timeout := time.Duration(150+rand.Intn(100)) * time.Millisecond
+			timeout := time.Duration(150+rand.Intn(80)) * time.Millisecond
 			time.Sleep(timeout)
 		}
 	}()
@@ -441,7 +449,6 @@ func (rf *Raft) sendRequestVoteToAll() {
 
 func (rf *Raft) startElection() {
 	rf.convertToCandidate()
-	Debug(dVote, "S%d in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
 	rf.sendRequestVoteToAll()
 }
 
@@ -452,7 +459,8 @@ func (rf *Raft) resetElectionTimer() {
 
 // reset election timer to a random time
 func (rf *Raft) resetElectionTimeout() {
-	rf.electionTimer.Reset(time.Duration(300+rand.Intn(100)) * time.Millisecond)
+	Debug(dTimer, "S%d reset election timer", rf.me)
+	rf.electionTimer.Reset(time.Duration(520+rand.Intn(150)) * time.Millisecond)
 }
 
 // stop election timer
@@ -469,10 +477,10 @@ func (rf *Raft) ticker() {
 		status := rf.electionStatus
 		rf.mu.Unlock()
 
-		if status == candidate {
-			//PrintBlue("candidate " + strconv.Itoa(rf.me) + "in term" + strconv.Itoa(rf.currentTerm) + "with status" + strconv.Itoa(int(rf.electionStatus)))
-			Debug(dLog, "S%d in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
-		}
+		//if status == candidate {
+		//	//PrintBlue("candidate " + strconv.Itoa(rf.me) + "in term" + strconv.Itoa(rf.currentTerm) + "with status" + strconv.Itoa(int(rf.electionStatus)))
+		//	Debug(dLog, "S%d in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
+		//}
 		if status == leader {
 			return
 		} else {
