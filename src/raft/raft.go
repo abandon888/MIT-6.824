@@ -19,7 +19,6 @@ package raft
 // 好规范啊这文档
 
 import (
-	"log"
 	"strconv"
 
 	//	"bytes"
@@ -192,7 +191,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.SetPrefix("RequestVote: ")
+	//log.SetPrefix("RequestVote: ")
 	//log.Println("server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus)
 	// If RPC request or response contains term T < currentTerm: return false
 	//Reply false if term < currentTerm (§5.1)
@@ -262,7 +261,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	//how to deal with reply?save it to rf?
-	log.SetPrefix("sendRequestVote: ")
+	//log.SetPrefix("sendRequestVote: ")
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -276,18 +275,19 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 		if reply.VoteGranted {
 			rf.voteGranted++
 		}
-		log.Printf("server %d send request vote to server %d, in term %d, get %v", rf.me, server, reply.Term, reply.VoteGranted)
+		//log.Printf("S%d send request vote to S%d, in term %d, get %v", rf.me, server, reply.Term, reply.VoteGranted)
+		Debug(dVote, "S%d send request vote to S%d, in term %d, get %v", rf.me, server, reply.Term, reply.VoteGranted)
 	}
 
 	return ok
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	log.SetPrefix("sendAppendEntries: ")
-	log.Printf("before:server %d send append entries to server %d,in term %d", rf.me, server, args.Term)
+	Debug(dLeader, "S%d send append entries to S%d,in term %d", rf.me, server, args.Term)
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	if !ok {
-		PrintRed("server " + strconv.Itoa(rf.me) + "send append entries to server " + strconv.Itoa(server) + "failed")
+		//PrintRed("server " + strconv.Itoa(rf.me) + "send append entries to server " + strconv.Itoa(server) + "failed")
+		Debug(dError, "S%d send append entries to S%d failed", rf.me, server)
 	}
 	//if reply term is higher,then convert to follower
 	rf.mu.Lock()
@@ -295,7 +295,8 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	if reply.Term > rf.currentTerm {
 		rf.convertToFollower(reply.Term)
 	}
-	log.Printf("after:server %d send append entries to server %d,in term %d,get %v", rf.me, server, reply.Term, reply.Success)
+	//log.Printf("after:S%d send append entries to S%d,in term %d,get %v", rf.me, server, reply.Term, reply.Success)
+	Debug(dAppend, "S%d send append entries to S%d,in term %d,get %v", rf.me, server, reply.Term, reply.Success)
 	return ok
 }
 
@@ -306,7 +307,8 @@ func (rf *Raft) convertToFollower(term int) {
 	rf.currentTerm = term
 	rf.votedFor = -1
 	rf.electionStatus = follower
-	log.Println("server ", rf.me, "convert to follower", "in term", rf.currentTerm, "with status", rf.electionStatus)
+	//log.Println("server ", rf.me, "convert to follower", "in term", rf.currentTerm, "with status", rf.electionStatus)
+	Debug(dTerm, "S%d convert to follower in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
 	rf.resetElectionTimer()
 	//rf.mu.Unlock()
 }
@@ -319,18 +321,20 @@ func (rf *Raft) convertToCandidate() {
 	rf.electionStatus = candidate
 	rf.voteGranted = 1
 	rf.mu.Unlock()
-	log.Println("server ", rf.me, "convert to candidate", "in term", rf.currentTerm, "with status", rf.electionStatus)
+	//log.Println("server ", rf.me, "convert to candidate", "in term", rf.currentTerm, "with status", rf.electionStatus)
+	Debug(dVote, "S%d convert to candidate in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
 	rf.resetElectionTimer()
 }
 
 // convert to leader
 func (rf *Raft) convertToLeader() {
-	rf.mu.Lock()
+	//rf.mu.Lock()
 	rf.votedFor = rf.me    //prevent vote for others
-	rf.stopElectionTimer() //stop election timer
+	rf.stopElectionTimer() //stop election timer//todo:why stop election timer here?
 	rf.electionStatus = leader
-	rf.mu.Unlock()
-	log.Println("server ", rf.me, "stop election timer", "in term", rf.currentTerm, "with status", rf.electionStatus)
+	//rf.mu.Unlock()
+	//log.Println("server ", rf.me, "stop election timer", "in term", rf.currentTerm, "with status", rf.electionStatus)
+	Debug(dTimer, "S%d stop election timer in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
 	rf.startHeartBeat()
 }
 
@@ -368,8 +372,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
-	log.SetPrefix("Kill: ")
-	log.Println("\033[31m raft server killed\033[0m")
+	//log.SetPrefix("Kill: ")
+	//log.Println("\033[31m raft server killed\033[0m")
+	//Debug(dInfo, "raft server killed")
 }
 
 func (rf *Raft) killed() bool {
@@ -396,7 +401,7 @@ func (rf *Raft) startHeartBeat() {
 	go func() {
 		for {
 			rf.sendHeartBeat()
-			timeout := time.Duration(520+rand.Intn(150)) * time.Millisecond
+			timeout := time.Duration(150+rand.Intn(100)) * time.Millisecond
 			time.Sleep(timeout)
 		}
 	}()
@@ -404,7 +409,7 @@ func (rf *Raft) startHeartBeat() {
 
 // send request vote to all peers
 func (rf *Raft) sendRequestVoteToAll() {
-	PrintBlue("server " + strconv.Itoa(rf.me) + " send request vote to all peers")
+	//It then votes for itself and issues RequestVote RPCs in parallel to each of the other servers in the cluster.
 	var wg sync.WaitGroup
 	rf.mu.Lock()
 	currentTerm := rf.currentTerm
@@ -417,13 +422,13 @@ func (rf *Raft) sendRequestVoteToAll() {
 		}
 
 		wg.Add(1)
-		go func(server int) {
+		go func(server int) { //use goroutine to send request vote to all peers
 			defer wg.Done()
 			ok := rf.sendRequestVote(server, &RequestVoteArgs{currentTerm, rf.me, len(rf.log), currentTerm}, &RequestVoteReply{})
 			if ok {
 				rf.mu.Lock()
 				if rf.voteGranted > len(rf.peers)/2 && rf.electionStatus == candidate {
-					log.Println("\u001B[31m server ", rf.me, "become leader in term", currentTerm, "with", rf.voteGranted, "votes \u001B[0m")
+					Debug(dLeader, "S%d become leader in term %d with %d votes", rf.me, currentTerm, rf.voteGranted)
 					rf.convertToLeader()
 				}
 				rf.mu.Unlock()
@@ -435,9 +440,8 @@ func (rf *Raft) sendRequestVoteToAll() {
 }
 
 func (rf *Raft) startElection() {
-	log.SetPrefix("startElection: ")
 	rf.convertToCandidate()
-	log.Println("\u001B[42m server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus, "\u001B[0m")
+	Debug(dVote, "S%d in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
 	rf.sendRequestVoteToAll()
 }
 
@@ -448,11 +452,12 @@ func (rf *Raft) resetElectionTimer() {
 
 // reset election timer to a random time
 func (rf *Raft) resetElectionTimeout() {
-	rf.electionTimer.Reset(time.Duration(520+rand.Intn(150)) * time.Millisecond)
+	rf.electionTimer.Reset(time.Duration(300+rand.Intn(100)) * time.Millisecond)
 }
 
 // stop election timer
 func (rf *Raft) stopElectionTimer() {
+	PrintBlue("server " + strconv.Itoa(rf.me) + " stop election timer")
 	rf.electionTimer.Stop()
 }
 
@@ -463,11 +468,15 @@ func (rf *Raft) ticker() {
 		rf.mu.Lock()
 		status := rf.electionStatus
 		rf.mu.Unlock()
+
+		if status == candidate {
+			//PrintBlue("candidate " + strconv.Itoa(rf.me) + "in term" + strconv.Itoa(rf.currentTerm) + "with status" + strconv.Itoa(int(rf.electionStatus)))
+			Debug(dLog, "S%d in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
+		}
 		if status == leader {
-			rf.startHeartBeat()
+			return
 		} else {
-			log.SetPrefix("ticker: ")
-			log.Println("\u001B[45m server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus, "\u001B[0m")
+			Debug(dTimer, "S%d in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
 			// Check if a leader election should be started.
 			select {
 			case <-rf.electionTimer.C:

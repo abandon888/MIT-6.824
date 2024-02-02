@@ -6,14 +6,14 @@ import (
 )
 
 // Debugging
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
+//const Debug = false
+//
+//func DPrintf(format string, a ...interface{}) (n int, err error) {
+//	if Debug {
+//		log.Printf(format, a...)
+//	}
+//	return
+//}
 
 // setupLogging 设置测试的日志输出到文件
 func setupLogging() *log.Logger {
