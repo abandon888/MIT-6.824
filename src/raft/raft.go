@@ -210,16 +210,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // AppendEntries RPC handler.
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
+	defer rf.mu.Unlock() // 再次获取锁以修改状态
+	//rf.mu.Lock()
 	currentTerm := rf.currentTerm
 	electionStatus := rf.electionStatus
-	rf.mu.Unlock() // 尽早释放锁
+	//rf.mu.Unlock() // 尽早释放锁
 
 	if electionStatus == leader {
 		Debug(dInfo, "S%d receive append entries from server(leader) %d in term %d", rf.me, args.LeaderId, args.Term)
 	}
 
-	rf.mu.Lock()
-	defer rf.mu.Unlock() // 再次获取锁以修改状态
 	if args.Term >= currentTerm {
 		rf.convertToFollower(args.Term)
 		reply.Success = true
@@ -289,8 +289,8 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 		Debug(dError, "S%d send append entries to S%d failed", rf.me, server)
 	}
 	//if reply term is higher,then convert to follower
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	//rf.mu.Lock()
+	//defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
 		rf.convertToFollower(reply.Term)
 	}
@@ -395,8 +395,9 @@ func (rf *Raft) sendHeartBeat() {
 				LeaderId: rf.me,
 			}
 			reply := &AppendEntriesReply{}
-			rf.mu.Unlock()
+
 			rf.sendAppendEntries(server, args, reply)
+			rf.mu.Unlock()
 		}(i)
 	}
 }
@@ -484,18 +485,20 @@ func (rf *Raft) ticker() {
 			case <-rf.electionTimer.C:
 				rf.startElection()
 			case <-rf.resetChan:
-				// 确保在重置计时器之前先停止计时器并清空其通道
-				if !rf.electionTimer.Stop() && len(rf.electionTimer.C) > 0 {
-					<-rf.electionTimer.C // 清空通道
-				}
 				rf.resetElectionTimeout()
-			}
-		}
+				// 非阻塞清空计时器通道
+				select {
+				case <-rf.electionTimer.C:
+				default:
+				}
 
-		// pause for a random amount of time between 50 and 350
-		// milliseconds.
-		ms := 50 + (rand.Int63() % 300)
-		time.Sleep(time.Duration(ms) * time.Millisecond)
+			}
+
+			// pause for a random amount of time between 50 and 350
+			// milliseconds.
+			ms := 50 + (rand.Int63() % 300)
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
 	}
 }
 
@@ -521,7 +524,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		log:            make([]interface{}, 0),
 		electionStatus: follower,
 		voteGranted:    0,
-		resetChan:      make(chan struct{}, 1),
+		resetChan:      make(chan struct{}, 4),
 		electionTimer:  time.NewTimer(time.Duration(520+rand.Intn(150)) * time.Millisecond),
 	}
 
