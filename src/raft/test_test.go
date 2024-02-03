@@ -63,14 +63,14 @@ func TestReElection2A(t *testing.T) {
 
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
-	Debug(dLog2, "warning:leader %v disconnected", leader1)
+	Debug(dLog2, "S%v disconnected", leader1)
 	cfg.checkOneLeader()
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.
 	cfg.connect(leader1)
-	Debug(dLog2, "warning:leader %v reconnected", leader1)
+	Debug(dLog2, "S%v reconnected", leader1)
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no new leader should
@@ -86,12 +86,12 @@ func TestReElection2A(t *testing.T) {
 
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
-	Debug(dLog2, "warning:leader %v reconnected", (leader2+1)%servers)
+	Debug(dLog2, "S%v reconnected", (leader2+1)%servers)
 	cfg.checkOneLeader()
 
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
-	Debug(dLog2, "warning:leader %v reconnected", leader2)
+	Debug(dLog2, "S%v reconnected", leader2)
 	cfg.checkOneLeader()
 
 	cfg.end()

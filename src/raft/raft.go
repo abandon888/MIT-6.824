@@ -19,8 +19,6 @@ package raft
 // 好规范啊这文档
 
 import (
-	"strconv"
-
 	//	"bytes"
 	"math/rand"
 	"sync"
@@ -30,9 +28,6 @@ import (
 	//	"6.5840/labgob"
 	"6.5840/labrpc"
 )
-
-var logger = setupLogging()
-var logPrefix = "raft: "
 
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -188,48 +183,51 @@ type RequestVoteReply struct {
 
 // RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	// Your code here (2A, 2B).
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	//log.SetPrefix("RequestVote: ")
-	//log.Println("server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus)
-	// If RPC request or response contains term T < currentTerm: return false
-	//Reply false if term < currentTerm (§5.1)
-	if args.Term < rf.currentTerm {
-		reply.Term = rf.currentTerm
+	currentTerm := rf.currentTerm
+	rf.mu.Unlock() // 尽早释放锁
+
+	if args.Term < currentTerm {
+		reply.Term = currentTerm
 		reply.VoteGranted = false
 		return
 	}
-	// If RPC request or response contains term T > currentTerm: set currentTerm = T, convert to follower
-	if args.Term > rf.currentTerm {
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock() // 再次获取锁以修改状态
+	if args.Term > currentTerm {
 		rf.convertToFollower(args.Term)
+		// convertToFollower 内部应该也有适当的锁控制
 	}
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		rf.votedFor = args.CandidateId
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
-		//log.Println("After RV:server ", rf.me, "in term", rf.currentTerm, "with status", rf.electionStatus)
-		rf.resetElectionTimer()
-		return
+		//rf.resetElectionTimer("RequestVote")//todo:不能频繁重置计时器的原因么？
 	}
-
 }
 
 // AppendEntries RPC handler.
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if rf.electionStatus == leader {
-		//PrintYellow("leader " + strconv.Itoa(rf.me) + "receive append entries from server(leader) " + strconv.Itoa(args.LeaderId) + "in term" + strconv.Itoa(args.Term))
+	currentTerm := rf.currentTerm
+	electionStatus := rf.electionStatus
+	rf.mu.Unlock() // 尽早释放锁
+
+	if electionStatus == leader {
 		Debug(dInfo, "S%d receive append entries from server(leader) %d in term %d", rf.me, args.LeaderId, args.Term)
 	}
-	if args.Term >= rf.currentTerm {
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock() // 再次获取锁以修改状态
+	if args.Term >= currentTerm {
 		rf.convertToFollower(args.Term)
 		reply.Success = true
 	} else {
+		Debug(dLog, "S%d receive append entries from server %d in term %d, but current term is %d,return false", rf.me, args.LeaderId, args.Term, currentTerm)
 		reply.Success = false
 	}
-	reply.Term = rf.currentTerm
+	reply.Term = currentTerm
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -260,6 +258,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	Debug(dVote, "S%d send request vote to S%d, in term %d", rf.me, server, args.Term)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	//how to deal with reply?save it to rf?
 	//log.SetPrefix("sendRequestVote: ")
@@ -309,7 +308,7 @@ func (rf *Raft) convertToFollower(term int) {
 	rf.electionStatus = follower
 	//log.Println("server ", rf.me, "convert to follower", "in term", rf.currentTerm, "with status", rf.electionStatus)
 	Debug(dTerm, "S%d convert to follower in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
-	rf.resetElectionTimer()
+	rf.resetElectionTimer("convertToFollower")
 	//rf.mu.Unlock()
 }
 
@@ -323,14 +322,14 @@ func (rf *Raft) convertToCandidate() {
 	rf.mu.Unlock()
 	//log.Println("server ", rf.me, "convert to candidate", "in term", rf.currentTerm, "with status", rf.electionStatus)
 	Debug(dVote, "S%d convert to candidate in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
-	rf.resetElectionTimer()
+	rf.resetElectionTimer("convertToCandidate")
 }
 
 // convert to leader
 func (rf *Raft) convertToLeader() {
 	//rf.mu.Lock()
-	rf.votedFor = rf.me    //prevent vote for others
-	rf.stopElectionTimer() //stop election timer//todo:why stop election timer here?
+	rf.votedFor = rf.me //prevent vote for others
+	//rf.stopElectionTimer() //stop election timer//todo:why stop election timer here?
 	rf.electionStatus = leader
 	//rf.mu.Unlock()
 	//log.Println("server ", rf.me, "stop election timer", "in term", rf.currentTerm, "with status", rf.electionStatus)
@@ -409,7 +408,7 @@ func (rf *Raft) startHeartBeat() {
 	go func() {
 		for {
 			rf.sendHeartBeat()
-			timeout := time.Duration(150+rand.Intn(80)) * time.Millisecond
+			timeout := time.Duration(150+rand.Intn(100)) * time.Millisecond
 			time.Sleep(timeout)
 		}
 	}()
@@ -418,7 +417,7 @@ func (rf *Raft) startHeartBeat() {
 // send request vote to all peers
 func (rf *Raft) sendRequestVoteToAll() {
 	//It then votes for itself and issues RequestVote RPCs in parallel to each of the other servers in the cluster.
-	var wg sync.WaitGroup
+	//var wg sync.WaitGroup
 	rf.mu.Lock()
 	currentTerm := rf.currentTerm
 	rf.mu.Unlock()
@@ -429,9 +428,9 @@ func (rf *Raft) sendRequestVoteToAll() {
 			continue
 		}
 
-		wg.Add(1)
+		//wg.Add(1)
 		go func(server int) { //use goroutine to send request vote to all peers
-			defer wg.Done()
+			//defer wg.Done()
 			ok := rf.sendRequestVote(server, &RequestVoteArgs{currentTerm, rf.me, len(rf.log), currentTerm}, &RequestVoteReply{})
 			if ok {
 				rf.mu.Lock()
@@ -444,7 +443,7 @@ func (rf *Raft) sendRequestVoteToAll() {
 		}(i)
 	}
 
-	wg.Wait() // Wait for all goroutines to finish
+	//wg.Wait() // Wait for all goroutines to finish
 }
 
 func (rf *Raft) startElection() {
@@ -453,19 +452,18 @@ func (rf *Raft) startElection() {
 }
 
 // reset election timer, send a signal to election timer and call resetElectionTimeout
-func (rf *Raft) resetElectionTimer() {
+func (rf *Raft) resetElectionTimer(msg string) {
+	Debug(dTimer, "S%d reset election timer: in %s", rf.me, msg)
 	rf.resetChan <- struct{}{}
 }
 
 // reset election timer to a random time
 func (rf *Raft) resetElectionTimeout() {
-	Debug(dTimer, "S%d reset election timer", rf.me)
 	rf.electionTimer.Reset(time.Duration(520+rand.Intn(150)) * time.Millisecond)
 }
 
 // stop election timer
 func (rf *Raft) stopElectionTimer() {
-	PrintBlue("server " + strconv.Itoa(rf.me) + " stop election timer")
 	rf.electionTimer.Stop()
 }
 
@@ -477,10 +475,6 @@ func (rf *Raft) ticker() {
 		status := rf.electionStatus
 		rf.mu.Unlock()
 
-		//if status == candidate {
-		//	//PrintBlue("candidate " + strconv.Itoa(rf.me) + "in term" + strconv.Itoa(rf.currentTerm) + "with status" + strconv.Itoa(int(rf.electionStatus)))
-		//	Debug(dLog, "S%d in term %d with status %d", rf.me, rf.currentTerm, rf.electionStatus)
-		//}
 		if status == leader {
 			return
 		} else {
