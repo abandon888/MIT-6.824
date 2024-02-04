@@ -113,16 +113,22 @@ func TestManyElections2A(t *testing.T) {
 		i2 := rand.Int() % servers
 		i3 := rand.Int() % servers
 		cfg.disconnect(i1)
+		Debug(dLog2, "S%v disconnected", i1)
 		cfg.disconnect(i2)
+		Debug(dLog2, "S%v disconnected", i2)
 		cfg.disconnect(i3)
+		Debug(dLog2, "S%v disconnected", i3)
 
 		// either the current leader should still be alive,
 		// or the remaining four should elect a new one.
 		cfg.checkOneLeader()
 
 		cfg.connect(i1)
+		Debug(dLog2, "S%v reconnected", i1)
 		cfg.connect(i2)
+		Debug(dLog2, "S%v reconnected", i2)
 		cfg.connect(i3)
+		Debug(dLog2, "S%v reconnected", i3)
 	}
 
 	cfg.checkOneLeader()

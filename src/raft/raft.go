@@ -260,8 +260,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	Debug(dVote, "S%d send request vote to S%d, in term %d", rf.me, server, args.Term)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	//how to deal with reply?save it to rf?
-	//log.SetPrefix("sendRequestVote: ")
+	if !ok {
+		Debug(dError, "S%d send request vote to S%d failed", rf.me, server)
+	}
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -275,14 +276,14 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 		if reply.VoteGranted {
 			rf.voteGranted++
 		}
-		Debug(dVote, "S%d send request vote to S%d, in term %d, get %v", rf.me, server, reply.Term, reply.VoteGranted)
+		Debug(dVote, "S%d send request vote to S%d, in term %d, get %v,now %v", rf.me, server, reply.Term, reply.VoteGranted, rf.voteGranted)
 	}
 
 	return ok
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	Debug(dAppend, "S%d send append entries to S%d,in term %d", rf.me, server, args.Term)
+	Debug(dAppend, "S%d send append entries to S%d,in term %d,status is %v", rf.me, server, args.Term, rf.electionStatus)
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	if !ok {
 		//PrintRed("server " + strconv.Itoa(rf.me) + "send append entries to server " + strconv.Itoa(server) + "failed")
@@ -393,7 +394,9 @@ func (rf *Raft) sendHeartBeat() {
 			}
 			reply := &AppendEntriesReply{}
 			rf.mu.Unlock()
-			rf.sendAppendEntries(server, args, reply)
+			if rf.electionStatus == leader && !rf.killed() {
+				rf.sendAppendEntries(server, args, reply)
+			}
 
 		}(i)
 	}
@@ -444,7 +447,7 @@ func (rf *Raft) resetElectionTimer(msg string) {
 
 // reset election timer to a random time
 func (rf *Raft) resetElectionTimeout() {
-	rf.electionTimer.Reset(time.Duration(520+rand.Intn(150)) * time.Millisecond)
+	rf.electionTimer.Reset(time.Duration(300+rand.Intn(300)) * time.Millisecond)
 }
 
 // stop election timer
@@ -468,7 +471,7 @@ func (rf *Raft) ticker() {
 			select {
 			case <-rf.electionTimer.C:
 				if status != leader {
-					rf.startElection()
+					go rf.startElection()
 				}
 			case <-rf.resetChan:
 				rf.resetElectionTimeout()
@@ -480,14 +483,15 @@ func (rf *Raft) ticker() {
 			}
 		case leader:
 			time.Sleep(150 * time.Millisecond)
+			rf.mu.Lock()
 			rf.sendHeartBeat()
+			rf.mu.Unlock()
 		}
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
 		ms := 50 + (rand.Int63() % 300)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
-
 	}
 }
 
@@ -514,7 +518,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		electionStatus: follower,
 		voteGranted:    0,
 		resetChan:      make(chan struct{}, 4),
-		electionTimer:  time.NewTimer(time.Duration(520+rand.Intn(150)) * time.Millisecond),
+		electionTimer:  time.NewTimer(time.Duration(300+rand.Intn(300)) * time.Millisecond),
 	}
 
 	// initialize from state persisted before a crash
